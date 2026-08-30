@@ -1,7 +1,7 @@
 import os
-import asyncio
 import random
 import sqlite3
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -20,6 +20,7 @@ if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing from Railway variables.")
 
 DATABASE = "dailyduck.db"
+DUCK_FOLDER = "ducks"
 
 DUCK_COLOR = 0xFFDE21
 
@@ -150,7 +151,7 @@ def get_server(guild_id):
 
     connection = sqlite3.connect(DATABASE)
 
-    cursor = connection.execute("""
+    result = connection.execute("""
         SELECT
             guild_id,
             channel_id,
@@ -162,9 +163,7 @@ def get_server(guild_id):
             last_post
         FROM servers
         WHERE guild_id = ?
-    """, (guild_id,))
-
-    result = cursor.fetchone()
+    """, (guild_id,)).fetchone()
 
     connection.close()
 
@@ -302,38 +301,110 @@ bot = commands.Bot(
 
 
 # ============================================================
-# RANDOM DUCK
+# FIND LOCAL DUCKS
+# ============================================================
+
+def get_local_ducks():
+
+    if not os.path.exists(DUCK_FOLDER):
+        return []
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp"
+    }
+
+    ducks = []
+
+    for filename in os.listdir(DUCK_FOLDER):
+
+        extension = os.path.splitext(
+            filename
+        )[1].lower()
+
+        if extension in allowed_extensions:
+
+            ducks.append(
+                os.path.join(
+                    DUCK_FOLDER,
+                    filename
+                )
+            )
+
+    return ducks
+
+
+# ============================================================
+# GET RANDOM DUCK
 # ============================================================
 
 async def get_random_duck():
 
-    api_url = "https://random-d.uk/api/v2/random"
+    local_ducks = get_local_ducks()
 
+    # 50% chance of choosing from your own
+    # collection when local ducks exist.
+    if local_ducks and random.choice([True, False]):
+
+        local_file = random.choice(
+            local_ducks
+        )
+
+        return (
+            f"file://{os.path.abspath(local_file)}",
+            local_file
+        )
+
+    # Otherwise use Random-D.uk.
     try:
+
+        api_url = "https://random-d.uk/api/v2/random"
 
         async with aiohttp.ClientSession() as session:
 
-            async with session.get(api_url) as response:
+            async with session.get(
+                api_url,
+                timeout=10
+            ) as response:
 
                 if response.status != 200:
 
                     print(
-                        f"Duck API returned HTTP {response.status}"
+                        f"Random-D.uk returned "
+                        f"HTTP {response.status}"
                     )
 
-                    return None
+                else:
 
-                data = await response.json()
+                    data = await response.json()
 
-                return data.get("url")
+                    image_url = data.get("url")
+
+                    if image_url:
+                        return image_url, None
 
     except Exception as error:
 
         print(
-            f"Error getting duck: {error}"
+            f"Random-D.uk error: {error}"
         )
 
-        return None
+    # If Random-D.uk fails, fall back to your ducks.
+    if local_ducks:
+
+        local_file = random.choice(
+            local_ducks
+        )
+
+        return (
+            f"file://{os.path.abspath(local_file)}",
+            local_file
+        )
+
+    return None, None
 
 
 # ============================================================
@@ -352,12 +423,14 @@ async def post_duck(guild_id):
     if not channel_id:
 
         print(
-            f"No channel configured for server {guild_id}"
+            f"No channel configured for {guild_id}"
         )
 
         return False
 
-    channel = bot.get_channel(channel_id)
+    channel = bot.get_channel(
+        channel_id
+    )
 
     if channel is None:
 
@@ -370,16 +443,17 @@ async def post_duck(guild_id):
         except Exception as error:
 
             print(
-                f"Could not access channel "
-                f"{channel_id}: {error}"
+                f"Could not access channel: {error}"
             )
 
             return False
 
-    image_url = await get_random_duck()
+    image_result = await get_random_duck()
 
-    if not image_url:
+    if not image_result:
         return False
+
+    image_url, local_file = image_result
 
     previous_title = server[6]
 
@@ -389,15 +463,13 @@ async def post_duck(guild_id):
         if title != previous_title
     ]
 
-    title = random.choice(available_titles)
+    title = random.choice(
+        available_titles
+    )
 
     embed = discord.Embed(
         title=title,
         color=DUCK_COLOR
-    )
-
-    embed.set_image(
-        url=image_url
     )
 
     embed.set_footer(
@@ -406,9 +478,31 @@ async def post_duck(guild_id):
 
     try:
 
-        await channel.send(
-            embed=embed
-        )
+        if local_file:
+
+            file = discord.File(
+                local_file,
+                filename=os.path.basename(local_file)
+            )
+
+            embed.set_image(
+                url=f"attachment://{os.path.basename(local_file)}"
+            )
+
+            await channel.send(
+                embed=embed,
+                file=file
+            )
+
+        else:
+
+            embed.set_image(
+                url=image_url
+            )
+
+            await channel.send(
+                embed=embed
+            )
 
         save_last_title(
             guild_id,
@@ -422,7 +516,7 @@ async def post_duck(guild_id):
 
         print(
             f"Duck posted successfully! "
-            f"Server: {guild_id} | Title: {title}"
+            f"Server: {guild_id}"
         )
 
         return True
@@ -446,20 +540,24 @@ async def post_duck(guild_id):
 
 
 # ============================================================
-# AUTOPOST SCHEDULER
+# AUTOPOST
 # ============================================================
 
 async def autopost_loop():
 
     await bot.wait_until_ready()
 
-    print("Autopost scheduler started.")
+    print(
+        "Autopost scheduler started."
+    )
 
     while not bot.is_closed():
 
         try:
 
-            connection = sqlite3.connect(DATABASE)
+            connection = sqlite3.connect(
+                DATABASE
+            )
 
             servers = connection.execute("""
                 SELECT
@@ -474,7 +572,9 @@ async def autopost_loop():
 
             connection.close()
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(
+                timezone.utc
+            )
 
             for server in servers:
 
@@ -486,10 +586,7 @@ async def autopost_loop():
 
                 should_post = False
 
-                # --------------------------------------------
                 # INTERVAL
-                # --------------------------------------------
-
                 if schedule_type == "interval":
 
                     if not interval_minutes:
@@ -518,11 +615,7 @@ async def autopost_loop():
 
                             should_post = True
 
-
-                # --------------------------------------------
                 # DAILY
-                # --------------------------------------------
-
                 elif schedule_type == "daily":
 
                     if not daily_time:
@@ -539,7 +632,6 @@ async def autopost_loop():
 
                         continue
 
-                    # Daily schedule uses UTC.
                     target_time = now.replace(
                         hour=hour,
                         minute=minute,
@@ -561,16 +653,16 @@ async def autopost_loop():
                                     last_post_string
                                 )
 
-                                if last_post.date() != now.date():
+                                if (
+                                    last_post.date()
+                                    != now.date()
+                                ):
+
                                     should_post = True
 
                             except ValueError:
 
                                 should_post = True
-
-                # --------------------------------------------
-                # POST
-                # --------------------------------------------
 
                 if should_post:
 
@@ -578,8 +670,6 @@ async def autopost_loop():
                         guild_id
                     )
 
-                    # Small delay so multiple servers
-                    # aren't hit simultaneously.
                     await asyncio.sleep(1)
 
         except Exception as error:
@@ -588,7 +678,6 @@ async def autopost_loop():
                 f"Scheduler error: {error}"
             )
 
-        # Check every 30 seconds.
         await asyncio.sleep(30)
 
 
@@ -650,8 +739,6 @@ async def duck(
 
         return
 
-    # We acknowledge the command privately while
-    # the duck is being retrieved.
     await interaction.response.defer(
         ephemeral=True
     )
@@ -662,7 +749,6 @@ async def duck(
 
     if success:
 
-        # Remove the temporary interaction response.
         await interaction.delete_original_response()
 
     else:
@@ -670,9 +756,8 @@ async def duck(
         await interaction.edit_original_response(
             content=(
                 "🦆 I couldn't post the duck. "
-                "Please check that I have permission "
-                "to view the configured channel, "
-                "send messages, and embed links."
+                "Please check my permissions in "
+                "the configured channel."
             )
         )
 
@@ -689,7 +774,7 @@ async def duck(
     manage_guild=True
 )
 @app_commands.describe(
-    mode="Choose how DailyDuck should post.",
+    mode="Choose interval, daily, or off.",
     amount="Number of minutes or hours.",
     unit="Choose minutes or hours.",
     time="Daily time in 24-hour format, such as 18:30."
@@ -730,22 +815,18 @@ async def autopost(
 
     guild_id = interaction.guild.id
 
-    server = get_server(guild_id)
+    server = get_server(
+        guild_id
+    )
 
     if not server or not server[1]:
 
         await interaction.response.send_message(
-            "🦆 Please use `/setup` first so I know "
-            "which channel to use.",
+            "🦆 Please use `/setup` first.",
             ephemeral=True
         )
 
         return
-
-
-    # --------------------------------------------------------
-    # OFF
-    # --------------------------------------------------------
 
     if mode.value == "off":
 
@@ -760,17 +841,12 @@ async def autopost(
 
         return
 
-
-    # --------------------------------------------------------
-    # INTERVAL
-    # --------------------------------------------------------
-
     if mode.value == "interval":
 
         if amount is None or unit is None:
 
             await interaction.response.send_message(
-                "Please provide both an amount and a unit.",
+                "Please provide an amount and unit.",
                 ephemeral=True
             )
 
@@ -807,18 +883,12 @@ async def autopost(
 
         return
 
-
-    # --------------------------------------------------------
-    # DAILY
-    # --------------------------------------------------------
-
     if mode.value == "daily":
 
         if not time:
 
             await interaction.response.send_message(
-                "Please provide a time in `HH:MM` format.\n"
-                "Example: `18:30`",
+                "Please provide a time in `HH:MM` format.",
                 ephemeral=True
             )
 
@@ -834,8 +904,7 @@ async def autopost(
         except ValueError:
 
             await interaction.response.send_message(
-                "❌ Invalid time.\n"
-                "Please use 24-hour `HH:MM` format, "
+                "❌ Invalid time. Use `HH:MM`, "
                 "such as `18:30`.",
                 ephemeral=True
             )
@@ -887,16 +956,11 @@ async def settings(
         server[1]
     )
 
-    if channel:
-
-        channel_text = channel.mention
-
-    else:
-
-        channel_text = f"<#{server[1]}>"
-
-
-    # Determine schedule text.
+    channel_text = (
+        channel.mention
+        if channel
+        else f"<#{server[1]}>"
+    )
 
     if not server[5]:
 
@@ -908,10 +972,8 @@ async def settings(
 
         if minutes % 60 == 0:
 
-            hours = minutes // 60
-
             schedule = (
-                f"Every {hours} hour(s)"
+                f"Every {minutes // 60} hour(s)"
             )
 
         else:
@@ -929,7 +991,6 @@ async def settings(
     else:
 
         schedule = "Not configured"
-
 
     embed = discord.Embed(
         title="🦆 DailyDuck Settings",
@@ -1068,7 +1129,9 @@ async def on_ready():
         )
 
 
-# Initialize database before starting.
+# ============================================================
+# START
+# ============================================================
 
 init_database()
 
