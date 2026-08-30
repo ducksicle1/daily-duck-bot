@@ -129,7 +129,7 @@ async def post_duck():
 
     image_url = data["url"]
 
-    # Pick a title different from the previous one
+    # Pick a title that is different from the previous one
     available_titles = [
         title for title in DUCK_TITLES
         if title != last_title
@@ -140,17 +140,14 @@ async def post_duck():
 
     # Create the embed
     embed = discord.Embed(
+        title=title,
         color=0xFFDE21
     )
 
     embed.set_image(url=image_url)
     embed.set_footer(text="dailyduck 🦆")
 
-    # Send the large title above the embed
-    await channel.send(
-        content=f"# 🦆 {title}",
-        embed=embed
-    )
+    await channel.send(embed=embed)
 
     print(f"Duck posted successfully! Title: {title}")
 
