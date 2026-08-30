@@ -10,15 +10,6 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
 
-@client.event
-async def on_ready():
-    print(f"Logged in as {client.user}")
-
-    if not duck_loop.is_running():
-        await post_duck()
-        duck_loop.start()
-
-
 async def post_duck():
     channel = client.get_channel(CHANNEL_ID)
 
@@ -26,7 +17,6 @@ async def post_duck():
         print("Could not find the duck channel.")
         return
 
-    # Get a random duck image
     api_url = "https://random-d.uk/api/v2/random"
 
     async with aiohttp.ClientSession() as session:
@@ -55,6 +45,18 @@ async def duck_loop():
 @duck_loop.before_loop
 async def before_duck_loop():
     await client.wait_until_ready()
+
+
+@client.event
+async def on_ready():
+    print(f"Logged in as {client.user}")
+
+    if not duck_loop.is_running():
+        # Post once immediately when the bot starts
+        await post_duck()
+
+        # Then post every 5 hours
+        duck_loop.start()
 
 
 client.run(TOKEN)
