@@ -10,6 +10,7 @@ CHANNEL_ID = int(os.getenv("DUCK_CHANNEL_ID"))
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
+
 DUCK_TITLES = [
     "A Duck Has Appeared!",
     "A Duck Has Been Spotted!",
@@ -20,7 +21,6 @@ DUCK_TITLES = [
     "Duck Detected!",
     "Duck Spotted!",
     "Duck Alert!",
-    "Duck Incoming!",
     "Behold: A Duck",
     "Lo and Behold, Duck",
     "Oh Look, A Duck",
@@ -104,13 +104,19 @@ DUCK_TITLES = [
 ]
 
 
+last_title = None
+
+
 async def post_duck():
+    global last_title
+
     channel = client.get_channel(CHANNEL_ID)
 
     if channel is None:
         print("Could not find the duck channel.")
         return
 
+    # Get a random duck
     api_url = "https://random-d.uk/api/v2/random"
 
     async with aiohttp.ClientSession() as session:
@@ -123,8 +129,18 @@ async def post_duck():
 
     image_url = data["url"]
 
+    # Pick a title that is different from the previous one
+    available_titles = [
+        title for title in DUCK_TITLES
+        if title != last_title
+    ]
+
+    title = random.choice(available_titles)
+    last_title = title
+
+    # Create the embed
     embed = discord.Embed(
-        title=random.choice(DUCK_TITLES),
+        title=title,
         color=0xFFDE21
     )
 
@@ -132,7 +148,8 @@ async def post_duck():
     embed.set_footer(text="dailyduck 🦆")
 
     await channel.send(embed=embed)
-    print("Duck posted successfully!")
+
+    print(f"Duck posted successfully! Title: {title}")
 
 
 async def duck_schedule():
