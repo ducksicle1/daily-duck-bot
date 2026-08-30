@@ -1,4 +1,5 @@
 import os
+import asyncio
 import discord
 from discord.ext import tasks
 import aiohttp
@@ -37,26 +38,20 @@ async def post_duck():
     print("Duck posted successfully!")
 
 
-@tasks.loop(hours=5)
-async def duck_loop():
-    await post_duck()
-
-
-@duck_loop.before_loop
-async def before_duck_loop():
+async def duck_schedule():
     await client.wait_until_ready()
+
+    while not client.is_closed():
+        await post_duck()
+        await asyncio.sleep(5 * 60 * 60)
 
 
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
 
-    if not duck_loop.is_running():
-        # Post once immediately when the bot starts
-        await post_duck()
-
-        # Then post every 5 hours
-        duck_loop.start()
+    if not hasattr(client, "duck_task"):
+        client.duck_task = asyncio.create_task(duck_schedule())
 
 
 client.run(TOKEN)
