@@ -30,9 +30,14 @@ async def post_duck():
 
     image_url = data["url"]
 
-    embed = discord.Embed()
+    embed = discord.Embed(
+        title="DUCK ALERT",
+        description="*This is not a drill.*",
+        color=0xFFDE21
+    )
+
     embed.set_image(url=image_url)
-    embed.set_footer(text="🦆 Daily Duck")
+    embed.set_footer(text="dailyduck 🦆")
 
     await channel.send(embed=embed)
     print("Duck posted successfully!")
